@@ -203,6 +203,7 @@ button, input, select { font: inherit; color: inherit; }
 .profile__meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--dim); }
 .profile__meta a { color: var(--muted); }
 .profile__actions { display: flex; flex-direction: column; gap: 8px; flex: none; align-self: flex-start; }
+.profile__export { display: flex; gap: 10px; justify-content: center; align-items: center; color: var(--dim); padding: 2px 0; }
 @media (max-width: 760px) {
   .profile__inner { flex-wrap: wrap; align-items: flex-start; }
   .profile__copy { flex-basis: calc(100% - 140px); }

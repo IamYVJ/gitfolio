@@ -10,6 +10,7 @@ Live at https://iamyvj.github.io/gitfolio/ — link straight to a profile with `
 - Contribution calendar for the past year, per-year totals, streaks and best day
 - Language breakdown by bytes of code
 - Every repo as a card, sortable by stars, activity or lines
+- Export: everything on the page as JSON, or the repo list as CSV
 
 It's a plain static site with no build step, so it runs as-is on GitHub Pages:
 **Settings → Pages → Deploy from a branch → `main` / root**.

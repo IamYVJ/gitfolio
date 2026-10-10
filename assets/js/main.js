@@ -493,6 +493,8 @@
       '<div class="profile__actions">' +
         '<a class="btn btn--ghost btn--sm" href="' + esc(u.html_url) + '" target="_blank" rel="noopener">View on GitHub ↗</a>' +
         '<button class="btn btn--ghost btn--sm" type="button" data-act="refresh">Refresh</button>' +
+        (S.scanDone ? '<span class="profile__export mono">Export <button class="linkbtn" data-act="json">JSON</button>' +
+          '<button class="linkbtn" data-act="csv" title="One row per repository">CSV</button></span>' : "") +
       "</div>";
   }
 
@@ -655,6 +657,64 @@
       : "";
   }
 
+  /* ---------------------------------------------------------------- export */
+  function exportData() {
+    const u = S.user, d = derive(), c = S.counts || {};
+    const cs = S.contrib ? contribStats(S.contrib) : null;
+    return {
+      generatedAt: new Date(S.at || Date.now()).toISOString(),
+      source: location.origin + location.pathname + "#" + u.login,
+      user: {
+        login: u.login, name: u.name, type: u.type, url: u.html_url, avatar: u.avatar_url, bio: u.bio, company: u.company,
+        location: u.location, blog: u.blog, createdAt: u.created_at, followers: u.followers, following: u.following
+      },
+      totals: {
+        repos: S.repos.length, sourceRepos: d.sources, forkedRepos: d.forked, stars: d.stars, forks: d.forks,
+        commits: c.commits, pullRequests: c.prs, issues: c.issues,
+        linesOfCode: d.scanned ? d.lines : null, linesAdded: d.scanned ? d.added : null, linesDeleted: d.scanned ? d.deleted : null
+      },
+      // Line counts and languages only cover the scanned repos; see `scanned` on each repo.
+      coverage: { scannedRepos: d.scanned, sourceRepos: d.sources, signedIn: !S.anon, rateLimited: S.rateHit, stillComputing: d.pending },
+      contributions: cs && {
+        pastYear: cs.year, allTime: cs.total, currentStreakDays: cs.current, longestStreakDays: cs.longest,
+        bestDay: cs.best && { date: cs.best[0], count: cs.best[1] }, byYear: cs.byYear,
+        days: S.contrib.map(function (x) { return { date: x[0], count: x[1] }; })
+      },
+      languages: { unit: d.langMode, values: d.langs },
+      repos: S.repos.map(function (r) {
+        const e = S.scan[r.full] || {};
+        return {
+          name: r.name, fullName: r.full, url: r.url, description: r.desc, fork: r.fork, private: r.priv, archived: r.archived,
+          language: r.language, stars: r.stars, forks: r.forks, pushedAt: r.pushed, scanned: !!e.stats,
+          lines: e.stats ? e.lines : null, linesAdded: e.stats ? e.added : null, linesDeleted: e.stats ? e.deleted : null,
+          commits: e.stats ? e.commits : null, languages: e.langs || null
+        };
+      })
+    };
+  }
+
+  function exportCsv() {
+    const cols = ["name", "url", "description", "language", "stars", "forks", "fork", "private", "archived", "pushedAt", "lines", "linesAdded", "linesDeleted", "commits"];
+    const cell = function (v) {
+      let t = v == null ? "" : String(v);
+      if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; // stop spreadsheets running a description as a formula
+      return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
+    return [cols.join(",")].concat(exportData().repos.map(function (r) {
+      return cols.map(function (k) { return cell(r[k]); }).join(",");
+    })).join("\r\n") + "\r\n";
+  }
+
+  function download(name, type, text) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: type + ";charset=utf-8" }));
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
   function renderRate() {
     if (rate.limit == null) return;
     $("#rate").textContent = "API · " + full(rate.remaining) + "/" + full(rate.limit) + " requests left · resets " + clock(rate.reset) +
@@ -769,6 +829,8 @@
     if (act === "refresh") load(S.user.login, true);
     else if (act === "signin") dialog.showModal();
     else if (act === "toggle") { ui.all = !ui.all; renderRepos(derive()); }
+    else if (act === "json") download(S.user.login + "-github-stats.json", "application/json", JSON.stringify(exportData(), null, 2));
+    else if (act === "csv") download(S.user.login + "-github-repos.csv", "text/csv", exportCsv());
   });
   view.addEventListener("change", function (e) {
     if (e.target.id === "sort" && S) { ui.sort = e.target.value; renderRepos(derive()); }
