@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>gitfolio — GitHub stats for any username</title>
+  <meta name="description" content="Repos, commits, lines of code, contributions, stars, forks and languages for any GitHub username. No sign-in needed.">
+  <meta name="theme-color" content="#05080d">
+  <meta name="color-scheme" content="dark">
+  <!-- The page only ever talks to GitHub's API and the public contributions mirror. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://api.github.com https://github-contributions-api.jogruber.de; img-src 'self' data: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; base-uri 'none'; form-action 'none'">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="gitfolio">
+  <meta property="og:title" content="gitfolio — GitHub stats for any username">
+  <meta property="og:description" content="Repos, commits, lines of code, contributions, stars, forks and languages. No sign-in needed.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://api.github.com">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body class="is-home">
+  <!-- Brand mark, reused in header and footer -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="mark" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="15.5" fill="#3ee0ff" opacity="0.12"/>
+      <path d="M16 2.5v8M16 21.5v8" stroke="#3ee0ff" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="16" cy="16" r="5.5" fill="#05080d" stroke="#3ee0ff" stroke-width="2"/>
+      <circle cx="16" cy="16" r="1.8" fill="#ffc34d"/>
+    </symbol>
+  </svg>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav" id="nav">
+    <div class="nav__inner wrap">
+      <a class="brand" href="#" aria-label="gitfolio home">
+        <svg class="brand__mark" aria-hidden="true"><use href="#mark"/></svg>
+        <span class="brand__name">git<b>folio</b></span>
+      </a>
+      <form class="search nav__search lookup" role="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <label class="sr" for="q-nav">GitHub username</label>
+        <input id="q-nav" name="q" type="search" placeholder="GitHub username" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </form>
+      <button class="btn btn--ghost btn--sm nav__acct" id="acct" type="button">Sign in</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ============ HOME ============ -->
+    <section class="hero" id="home">
+      <div class="hero__inner wrap">
+        <p class="eyebrow"><span class="led led--green" aria-hidden="true"></span> No sign-in needed · public data</p>
+        <h1 class="hero__title">Any GitHub profile,<br><span class="hl">by the numbers.</span></h1>
+        <p class="hero__lede">
+          Repos, commits, lines of code, contributions, stars, forks and languages for any username —
+          read straight from GitHub in your browser.
+        </p>
+        <form class="search hero__search lookup" role="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+          <label class="sr" for="q-home">GitHub username</label>
+          <input id="q-home" name="q" type="search" placeholder="Enter a GitHub username" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button class="btn btn--primary" type="submit">Show stats
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </form>
+        <p class="hero__err" id="home-err" role="alert" hidden></p>
+        <p class="hero__try mono">Try
+          <a href="#torvalds">torvalds</a>
+          <a href="#sindresorhus">sindresorhus</a>
+          <a href="#gaearon">gaearon</a>
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ STATUS ============ -->
+    <div class="status wrap" id="status" role="status" hidden>
+      <span class="led led--green" aria-hidden="true"></span>
+      <span class="mono" id="status-text"></span>
+      <span class="status__bar" aria-hidden="true"><i id="status-bar"></i></span>
+    </div>
+
+    <!-- ============ PROFILE (rendered by main.js) ============ -->
+    <div id="view" hidden></div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer__inner">
+      <a class="brand" href="#" aria-label="gitfolio home">
+        <svg class="brand__mark" aria-hidden="true"><use href="#mark"/></svg>
+        <span class="brand__name">git<b>folio</b></span>
+      </a>
+      <p class="footer__tag mono" id="rate">API · idle</p>
+      <nav class="footer__links" aria-label="Links">
+        <a href="https://github.com/IamYVJ/gitfolio" target="_blank" rel="noopener">Source</a>
+        <a href="#main">Back to top ↑</a>
+      </nav>
+      <p class="footer__fine mono dim">Not affiliated with GitHub. Data comes from the GitHub API and is cached in your browser for an hour.</p>
+    </div>
+  </footer>
+
+  <!-- ============ SIGN-IN DIALOG ============ -->
+  <dialog class="modal" id="signin" aria-labelledby="si-title">
+    <div class="modal__frame">
+      <header class="modal__head">
+        <div>
+          <p class="mono dim">OPTIONAL</p>
+          <h2 id="si-title">Sign in with a token</h2>
+        </div>
+        <button class="iconbtn" id="si-close" type="button" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+
+      <form class="modal__body" id="si-form" autocomplete="off">
+        <p>Signing in lifts GitHub's limit from 60 to 5,000 requests an hour, so every repo gets scanned. On your own profile it also adds private repos and private contributions.</p>
+        <p class="dim">A static site can't do GitHub's OAuth login (that needs a server to hold a secret), so sign-in uses a personal access token. It stays in this browser and is only ever sent to api.github.com.</p>
+        <ol class="steps">
+          <li>Create a token:
+            <a href="https://github.com/settings/tokens/new?description=gitfolio&scopes=read:user" target="_blank" rel="noopener">public data only ↗</a>
+            or <a href="https://github.com/settings/tokens/new?description=gitfolio&scopes=read:user,repo" target="_blank" rel="noopener">include private repos ↗</a>
+          </li>
+          <li>Paste it here.</li>
+        </ol>
+        <label class="field">
+          <span class="sr">Personal access token</span>
+          <input id="si-token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" required>
+        </label>
+        <label class="check">
+          <input id="si-remember" type="checkbox">
+          <span>Remember on this device <span class="dim">(otherwise forgotten when the tab closes)</span></span>
+        </label>
+        <p class="modal__err" id="si-err" role="alert" hidden></p>
+        <div class="modal__actions">
+          <button class="btn btn--primary" type="submit" id="si-submit">Sign in</button>
+        </div>
+      </form>
+
+      <div class="modal__body" id="si-me" hidden>
+        <div class="me">
+          <img id="si-avatar" alt="" width="48" height="48">
+          <div>
+            <p class="me__name" id="si-login"></p>
+            <p class="mono dim">Signed in · 5,000 requests / hour</p>
+          </div>
+        </div>
+        <div class="modal__actions">
+          <a class="btn btn--primary" id="si-mine" href="#">View my stats</a>
+          <button class="btn btn--ghost" id="si-out" type="button">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="tip mono" id="tip" hidden></div>
+
+  <noscript><p class="noscript">gitfolio needs JavaScript to read GitHub's API.</p></noscript>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>
