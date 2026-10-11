@@ -21,6 +21,7 @@ It's a plain static site with no build step, so it runs as-is on GitHub Pages:
 index.html              page shell (home, sign-in dialog)
 assets/css/style.css    all styles
 assets/js/main.js       GitHub API calls, caching, rendering
+assets/js/count.js      GoatCounter's pageview script, self-hosted copy (ISC licence)
 favicon.svg
 .nojekyll               serve files as-is (skip Jekyll)
 ```
@@ -42,7 +43,7 @@ Things worth knowing:
 - **Lines of code** is additions minus deletions by all contributors over a repo's history, so it counts every tracked file, not just source code. Forks are skipped.
 - GitHub computes contributor stats on demand. The first lookup of a rarely visited repo can take up to half a minute; the page waits and fills the numbers in.
 - **Without sign-in** GitHub allows 60 API requests an hour per IP. That covers the profile plus line counts and languages for the 10 most-starred source repos. Results are cached in `localStorage` for an hour so reloads are free.
-- The only third party involved is the contributions mirror, used when not signed in. It receives the username being looked up and nothing else.
+- Two third parties are involved. The contributions mirror, used when not signed in, receives the username being looked up and nothing else. [GoatCounter](https://www.goatcounter.com) counts page loads (see below).
 
 ## Signing in
 
@@ -63,7 +64,8 @@ When you sign out you can also **revoke** the token, which asks GitHub to disabl
 - **Encrypted if remembered.** "Remember on this device" asks for a passphrase and stores the token only as AES-GCM ciphertext, with the key derived from the passphrase (PBKDF2-SHA-256, 600,000 rounds). The passphrase is never stored; you type it to unlock.
 - **Sent only to GitHub.** The token goes to `api.github.com` in the `Authorization` header. It is never put in a URL, the cache, an export or a log, and the third-party contributions mirror is called without it.
 - **Private data stays in memory.** Lookups made while signed in are not written to `localStorage`.
-- **Script lockdown.** A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API and the contributions mirror.
+- **Script lockdown.** A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API, the contributions mirror and GoatCounter.
+- **Analytics without third-party code.** Page loads are counted with GoatCounter, which sets no cookies. Its `count.js` is a copy served from this repo, so no outside script runs on the page. It sends the page path, referrer and screen width. The username you look up is in the URL hash, which is not sent, and the page title is pinned to "gitfolio".
 - **Untrusted data.** Text from GitHub is escaped before it reaches the page, links are restricted to `http(s)`, and data from the mirror is validated first.
 - **Paste check.** Text that isn't shaped like a GitHub token is rejected before anything is sent.
 - **Framing and leakage.** The page refuses to run inside another site's frame or over plain http, and sends no referrer or cookies with its requests.

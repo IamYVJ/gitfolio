@@ -1013,7 +1013,8 @@
   function route(force) {
     let raw = "";
     try { raw = decodeURIComponent(location.hash.slice(1)); } catch (e) { /* malformed hash */ }
-    if (!raw || raw === "main") { showHome(); return; }
+    // "toggle-goatcounter" is count.js's opt-out switch, not a username.
+    if (!raw || raw === "main" || raw === "toggle-goatcounter") { showHome(); return; }
     const login = parseLogin(raw);
     if (!login) { showHome("That doesn't look like a GitHub username."); return; }
     load(login, force === true);
@@ -1070,6 +1071,41 @@
   function onScroll() { nav.classList.toggle("is-scrolled", window.scrollY > 8); }
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
+
+  // Decorative visitor footnote. Stays hidden on every failure: adblocker,
+  // offline, a brand-new path with no data yet, or the "visitor counts" setting off.
+  function showVisitorCount() {
+    const box = $(".visitor-counter"), out = $("#visitor-count");
+    if (!box || !out) return;
+
+    // Read the endpoint off the beacon tag so the site URL lives in one place.
+    const tag = $("script[data-goatcounter]");
+    const endpoint = tag && tag.getAttribute("data-goatcounter");
+    if (!endpoint) return;
+
+    // This page's path only. Never /counter/TOTAL.json, which sums every project.
+    // pathname WITHOUT location.search, on purpose.
+    const path = window.location.pathname;
+
+    // A fixed date before this project's first pageview. All-time is the default,
+    // so this doesn't change the count; it gives the response its own cache key.
+    const START = "2026-01-01";
+
+    // Not FETCH: GoatCounter's ~4h response cache is wanted here.
+    fetch(endpoint.replace(/\/count$/, "") + "/counter/" + encodeURIComponent(path) + ".json?start=" + START, { credentials: "omit", referrerPolicy: "no-referrer" })
+      .then(function (res) { return res.ok ? res.json() : Promise.reject(new Error("bad status")); })
+      .then(function (data) {
+        // `count` is already a formatted string: render it as-is.
+        if (data && data.count != null) {
+          out.textContent = String(data.count);
+          box.hidden = false;
+        }
+      })
+      .catch(function () { /* decorative: stay hidden */ });
+  }
+  // This file loads before the beacon tag, so wait for the parser to reach it.
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", showVisitorCount, { once: true });
+  else showVisitorCount();
 
   // Sweep away a token left unencrypted by an earlier build. Signing in now needs the passphrase or a fresh paste.
   store(sessionStorage, LEGACY_TOKEN_KEY, null);

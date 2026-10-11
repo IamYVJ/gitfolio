@@ -7,8 +7,9 @@
   <meta name="description" content="Repos, commits, lines of code, contributions, stars, forks and languages for any GitHub username. No sign-in needed.">
   <meta name="theme-color" content="#05080d">
   <meta name="color-scheme" content="dark">
-  <!-- The page only ever talks to GitHub's API and the public contributions mirror. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://api.github.com https://github-contributions-api.jogruber.de; img-src 'self' data: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+  <!-- Scripts run from this site only. Requests go to GitHub's API, the public contributions mirror,
+       and GoatCounter (pageview count; its script is self-hosted so no third-party code runs here). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://api.github.com https://github-contributions-api.jogruber.de https://yvj.goatcounter.com; img-src 'self' data: https://*.githubusercontent.com https://yvj.goatcounter.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
@@ -105,6 +106,9 @@
         <button class="btn btn--ghost btn--sm btn--danger" id="clear-data" type="button" title="Remove everything gitfolio stored in this browser, including your token.">Clear data</button>
         <span class="mono" id="cleared" role="status" hidden></span>
       </div>
+      <p class="visitor-counter" hidden>
+        <span id="visitor-count" class="visitor-count">—</span> visitors
+      </p>
       <p class="footer__fine mono dim">Not affiliated with GitHub. Data comes from the GitHub API and is cached in your browser for an hour.</p>
     </div>
   </footer>
@@ -195,5 +199,14 @@
   <noscript><p class="noscript">gitfolio needs JavaScript to read GitHub's API.</p></noscript>
 
   <script src="assets/js/main.js"></script>
+  <!-- GoatCounter pageview beacon. One site shared across all projects on purpose:
+       counts are per-path, so each project is separated by its own pathname.
+       count.js is a local copy so script-src can stay 'self' on a page that handles tokens.
+       The title is pinned so a profile's name in document.title is never sent. -->
+  <script
+    data-goatcounter="https://yvj.goatcounter.com/count"
+    data-goatcounter-settings='{"title": "gitfolio"}'
+    async
+    src="assets/js/count.js"></script>
 </body>
 </html>

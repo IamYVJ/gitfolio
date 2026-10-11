@@ -359,6 +359,10 @@ button, input, select { font: inherit; color: inherit; }
 .footer__links a:hover { color: var(--cyan); }
 .footer__data { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .footer__data span { color: var(--green); }
+/* No `display` on .visitor-counter: it would override the `hidden` attribute
+   and show a bare "— visitors" to anyone whose adblocker blocks GoatCounter. */
+.visitor-counter { grid-column: 1 / -1; margin: 0; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--dim); }
+.visitor-count { font-variant-numeric: tabular-nums; color: var(--muted); }
 .footer__fine { grid-column: 1 / -1; margin: 8px 0 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: 0.72rem; }
 @media (max-width: 700px) { .footer__inner { grid-template-columns: minmax(0, 1fr); } }
 
