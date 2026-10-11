@@ -46,22 +46,28 @@ Things worth knowing:
 
 ## Signing in
 
-A static site can't do GitHub's OAuth login, because exchanging the login code needs a client secret held on a server. Sign-in therefore uses a [personal access token](https://github.com/settings/tokens):
+A static site can't do GitHub's OAuth login, because exchanging the login code needs a client secret held on a server. Sign-in therefore uses a [fine-grained personal access token](https://github.com/settings/personal-access-tokens).
 
-- **classic token with no scopes** — public data, 5,000 requests an hour, every repo scanned. Safest: it can't read or change anything private.
-- **fine-grained token** with read-only *Contents* and *Metadata* — also your private repos when you view your own profile.
+The sign-in dialog links to GitHub's token form with everything pre-filled for the least access the page needs:
 
-Give the token an expiry date, and never use one that can write. gitfolio only reads, and it warns you if the token you paste has write scopes.
+- **Expiry** — 1 day by default (the shortest GitHub allows), or 7 or 30 days.
+- **Permissions** — none, which means read-only access to public repos. Ticking "include my private repos" adds read-only *Metadata*, the only permission the stats need; you then pick *All repositories* on GitHub's form.
+
+A classic token that carries any write scope (`repo`, `workflow`, …) is refused. GitHub doesn't let a page read back a fine-grained token's permissions, so for those the pre-filled link is the safeguard.
+
+When you sign out you can also **revoke** the token, which asks GitHub to disable it permanently.
 
 ## Security
 
-A token kept in the browser can be read by anything that runs script on the page, by browser extensions, and by anyone using the same browser profile. That can't be fully removed on a static site, so the page is built to keep the exposure small:
+- **Not stored by default.** The token is held in memory for the visit and is gone on reload.
+- **Encrypted if remembered.** "Remember on this device" asks for a passphrase and stores the token only as AES-GCM ciphertext, with the key derived from the passphrase (PBKDF2-SHA-256, 600,000 rounds). The passphrase is never stored; you type it to unlock.
+- **Sent only to GitHub.** The token goes to `api.github.com` in the `Authorization` header. It is never put in a URL, the cache, an export or a log, and the third-party contributions mirror is called without it.
+- **Private data stays in memory.** Lookups made while signed in are not written to `localStorage`.
+- **Script lockdown.** A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API and the contributions mirror.
+- **Untrusted data.** Text from GitHub is escaped before it reaches the page, links are restricted to `http(s)`, and data from the mirror is validated first.
+- **Paste check.** Text that isn't shaped like a GitHub token is rejected before anything is sent.
+- **Framing and leakage.** The page refuses to run inside another site's frame, and sends no referrer or cookies with its requests.
 
-- The token is kept in `sessionStorage` (gone when the tab closes) unless you tick "Remember on this device".
-- It is sent only to `api.github.com`, in the `Authorization` header. It is never put in a URL, the cache, an export or a log, and the third-party contributions mirror is called without it.
-- A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API and the contributions mirror.
-- All text from GitHub is escaped before it reaches the page, links are restricted to `http(s)`, and data from the mirror is validated first.
-- Pasted text that isn't shaped like a GitHub token is rejected before anything is sent.
-- The page refuses to run inside another site's frame, and sends no referrer or cookies with its requests.
+What this doesn't cover: while you are signed in, the token is in the page's memory, so malicious script running on the page or a hostile browser extension could still use it. A short-lived, read-only token is what limits the damage in that case.
 
-At the bottom of the page, **Clear cache** forgets saved lookups, and **Clear data** removes everything gitfolio stored in the browser, token included. To cut off a token completely, also delete it at github.com/settings/tokens.
+At the bottom of the page, **Clear cache** forgets saved lookups, and **Clear data** removes everything gitfolio stored in the browser, the encrypted token included.

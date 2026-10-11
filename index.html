@@ -123,28 +123,50 @@
       </header>
 
       <form class="modal__body" id="si-form" autocomplete="off">
-        <p>Signing in lifts GitHub's limit from 60 to 5,000 requests an hour, so every repo gets scanned. On your own profile it also adds private repos and private contributions.</p>
-        <p class="dim">A static site can't do GitHub's OAuth login (that needs a server to hold a secret), so sign-in uses a personal access token. It stays in this browser and is only ever sent to api.github.com.</p>
+        <p>Signing in lifts GitHub's limit from 60 to 5,000 requests an hour, so every repo gets scanned. It can also include your private repos on your own profile.</p>
+        <p class="dim">A static site can't do GitHub's OAuth login (that needs a server to hold a secret), so sign-in uses a personal access token. It is only ever sent to api.github.com.</p>
         <ol class="steps">
-          <li>Create a token with an expiry date:
-            <a href="https://github.com/settings/tokens/new?description=gitfolio" target="_blank" rel="noopener noreferrer">no scopes, public data only ↗</a> (safest),
-            or a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">fine-grained token ↗</a>
-            with read-only <em>Contents</em> and <em>Metadata</em> to include private repos.
+          <li>
+            Create a read-only token that expires in
+            <select id="si-days" aria-label="Token lifetime">
+              <option value="1" selected>1 day</option>
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+            </select>
+            <label class="check check--inline"><input id="si-private" type="checkbox"> <span>include my private repos</span></label>
+            <p class="steps__go"><a class="btn btn--ghost btn--sm" id="si-create" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create token on GitHub ↗</a></p>
+            <p class="dim">The link pre-fills GitHub's form with the name, expiry and the least access gitfolio needs. Don't add permissions.</p>
+            <p class="dim" id="si-private-note" hidden>On GitHub's form, set <em>Repository access</em> to <em>All repositories</em>. The only permission is read-only <em>Metadata</em>, already selected.</p>
           </li>
           <li>Paste it here.</li>
         </ol>
-        <p class="dim">Never give this page a token that can write. Anyone using this browser profile, and any browser extension, can read a saved token, so on a shared computer leave "Remember" unticked.</p>
         <label class="field">
           <span class="sr">Personal access token</span>
-          <input id="si-token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" required>
+          <input id="si-token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false" required>
         </label>
-        <label class="check">
-          <input id="si-remember" type="checkbox">
-          <span>Remember on this device <span class="dim">(otherwise forgotten when the tab closes)</span></span>
-        </label>
-        <p class="modal__err" id="si-err" role="alert" hidden></p>
+        <fieldset class="keep">
+          <legend class="sr">How long to keep the token</legend>
+          <label class="check"><input type="radio" name="keep" value="visit" checked> <span>Just this visit <span class="dim">(held in memory, never saved; reloading signs you out)</span></span></label>
+          <label class="check"><input type="radio" name="keep" value="vault" id="si-keep-vault"> <span>Remember on this device, encrypted with a passphrase</span></label>
+          <label class="field" id="si-pass-field" hidden>
+            <span class="sr">Passphrase</span>
+            <input id="si-pass" type="password" placeholder="Passphrase, 8+ characters" autocomplete="new-password" minlength="8">
+          </label>
+        </fieldset>
         <div class="modal__actions">
           <button class="btn btn--primary" type="submit" id="si-submit">Sign in</button>
+        </div>
+      </form>
+
+      <form class="modal__body" id="si-lock" autocomplete="off" hidden>
+        <p>A token is saved on this device, encrypted. Enter your passphrase to unlock it.</p>
+        <label class="field">
+          <span class="sr">Passphrase</span>
+          <input id="si-unlock" type="password" placeholder="Passphrase" autocomplete="off" required>
+        </label>
+        <div class="modal__actions">
+          <button class="btn btn--primary" type="submit" id="si-unlock-btn">Unlock</button>
+          <button class="btn btn--ghost" type="button" id="si-forget">Forget saved token</button>
         </div>
       </form>
 
@@ -157,12 +179,14 @@
             <p class="mono dim" id="si-store"></p>
           </div>
         </div>
-        <p class="modal__warn" id="si-warn" role="alert" hidden></p>
         <div class="modal__actions">
           <a class="btn btn--primary" id="si-mine" href="#">View my stats</a>
           <button class="btn btn--ghost" id="si-out" type="button">Sign out</button>
+          <button class="btn btn--ghost btn--danger" id="si-revoke" type="button" title="Sign out and permanently revoke this token on GitHub">Sign out &amp; revoke token</button>
         </div>
       </div>
+
+      <p class="modal__msg" id="si-msg" role="alert" hidden></p>
     </div>
   </dialog>
 

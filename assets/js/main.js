@@ -15,9 +15,11 @@
   const ANON_PAGES = 3, AUTH_PAGES = 10; // x100 repos
   const STATS_WAITS = [4000, 6000, 8000, 10000, 12000]; // pauses between polls for GitHub's line counts
   const TTL = 60 * 60e3;
-  const APP_PREFIX = "gitfolio:", TOKEN_KEY = APP_PREFIX + "token", CACHE_PREFIX = APP_PREFIX + "c:";
+  const APP_PREFIX = "gitfolio:", CACHE_PREFIX = APP_PREFIX + "c:", VAULT_KEY = APP_PREFIX + "vault";
+  const LEGACY_TOKEN_KEY = APP_PREFIX + "token"; // earlier builds kept the token here unencrypted
+  const KDF_ROUNDS = 600000;
   const TOKEN_SHAPE = /^(?:gh[a-z]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|[a-f0-9]{40})$/;
-  // Classic-token scopes that can change things. gitfolio only reads, so these earn a warning.
+  // Classic-token scopes that can change things. gitfolio only reads, so a token carrying one is refused.
   const WRITE_SCOPE = /^(repo|public_repo|workflow|gist|user|notifications|codespace|project|delete_repo|delete:.*|write:.*|admin:.*)$/;
   // Never send cookies or a referrer with any request; the token only ever travels in the Authorization header.
   const FETCH = { credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store" };
@@ -240,25 +242,30 @@
   }
 
   /* ----------------------------------------------------------------- cache */
-  function cacheKey(login) { return CACHE_PREFIX + (token ? "a:" : "p:") + login.toLowerCase(); }
+  // Anonymous lookups are public data and go to localStorage. Signed-in lookups can include private
+  // repos, so they are only ever held in memory.
+  let memCache = {};
+  function cacheKey(login) { return CACHE_PREFIX + "p:" + login.toLowerCase(); }
   function cacheGet(login) {
-    const hit = store(localStorage, cacheKey(login));
+    const hit = token ? memCache[login.toLowerCase()] : store(localStorage, cacheKey(login));
     return hit && Date.now() - hit.t < hit.ttl ? hit.S : null;
   }
   function cachePut() {
     // Incomplete results expire quickly so a reload picks up what GitHub hadn't finished computing.
-    const ttl = S.rateHit || derive().pending ? 3 * 60e3 : TTL;
+    const entry = { t: Date.now(), ttl: S.rateHit || derive().pending ? 3 * 60e3 : TTL, S: S };
+    if (token) { memCache[S.user.login.toLowerCase()] = entry; return; }
     try {
       const keys = Object.keys(localStorage).filter(function (k) { return k.indexOf(CACHE_PREFIX) === 0; });
       keys.map(function (k) { return [k, (store(localStorage, k) || {}).t || 0]; })
         .sort(function (a, b) { return b[1] - a[1]; }).slice(5)
         .forEach(function (k) { localStorage.removeItem(k[0]); });
-      localStorage.setItem(cacheKey(S.user.login), JSON.stringify({ t: Date.now(), ttl: ttl, S: S }));
+      localStorage.setItem(cacheKey(S.user.login), JSON.stringify(entry));
     } catch (e) { /* storage full or blocked: the page still works, just without the cache */ }
   }
-  function cacheClear(prefix) {
+  function cacheClear() {
+    memCache = {};
     try {
-      Object.keys(localStorage).forEach(function (k) { if (k.indexOf(prefix) === 0) localStorage.removeItem(k); });
+      Object.keys(localStorage).forEach(function (k) { if (k.indexOf(CACHE_PREFIX) === 0) localStorage.removeItem(k); });
     } catch (e) { /* ignore */ }
   }
 
@@ -375,7 +382,7 @@
       cachePut();
     } catch (e) {
       if (!alive() || e.name === "AbortError") return;
-      if (e.kind === "auth") { signOut(true); return; }
+      if (e.kind === "auth") { signOut("Your token no longer works (it may have expired). Sign in again or carry on without it."); return; }
       const msg = e.kind === "missing" ? "No GitHub user named “" + login + "”."
         : e.kind === "rate" ? e.message + (token ? "" : " Sign in to get 5,000 requests an hour.")
         : e.kind ? e.message : "Couldn't reach GitHub. Check your connection and try again.";
@@ -736,82 +743,174 @@
       (token ? "" : " · not signed in");
   }
 
+  /* ----------------------------------------------------------------- vault */
+  // The token is never written to storage in the clear. By default it lives in memory only. If the
+  // user asks to be remembered it is stored encrypted (AES-GCM) under a key stretched from their
+  // passphrase, so the stored blob is useless without the passphrase, to this page's own code too.
+  const canEncrypt = !!(window.crypto && crypto.subtle);
+  function b64(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))); }
+  function unb64(str) { return Uint8Array.from(atob(str), function (c) { return c.charCodeAt(0); }); }
+  async function vaultKey(pass, salt) {
+    const raw = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt, iterations: KDF_ROUNDS, hash: "SHA-256" }, raw,
+      { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function vaultSave(tok, pass) {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, await vaultKey(pass, salt), new TextEncoder().encode(tok));
+    store(localStorage, VAULT_KEY, { v: 1, salt: b64(salt), iv: b64(iv), ct: b64(ct) });
+  }
+  // Rejects if the passphrase is wrong (AES-GCM authenticates, so a bad key can't yield garbage).
+  async function vaultOpen(pass) {
+    const v = store(localStorage, VAULT_KEY);
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(v.iv) }, await vaultKey(pass, unb64(v.salt)), unb64(v.ct));
+    return new TextDecoder().decode(pt);
+  }
+  function hasVault() { return !!store(localStorage, VAULT_KEY); }
+
   /* --------------------------------------------------------------- sign-in */
   const dialog = $("#signin"), acct = $("#acct");
 
+  function say(text, ok) {
+    const el = $("#si-msg");
+    el.textContent = text || "";
+    el.hidden = !text;
+    el.classList.toggle("is-ok", !!ok);
+  }
+
+  // GitHub's token form, pre-filled with the least this page needs: read-only, short-lived, and
+  // public repos only unless the user asks for private ones. Fine-grained tokens can't expire in under a day.
+  function renderTokenLink() {
+    const priv = $("#si-private").checked, now = new Date();
+    // Token names must be unique per account, hence the timestamp.
+    const name = "gitfolio " + today() + " " + pad(now.getHours()) + pad(now.getMinutes());
+    $("#si-create").href = "https://github.com/settings/personal-access-tokens/new?name=" + encodeURIComponent(name) +
+      "&description=" + encodeURIComponent("Read-only access for gitfolio stats") +
+      "&expires_in=" + encodeURIComponent($("#si-days").value) + (priv ? "&metadata=read" : "");
+    $("#si-private-note").hidden = !priv;
+  }
+
   function renderAcct() {
-    acct.innerHTML = viewer ? '<img src="' + esc(safeUrl(viewer.avatar_url)) + '" alt="" referrerpolicy="no-referrer">' + esc(viewer.login) : "Sign in";
-    $("#si-form").hidden = !!viewer;
+    const locked = !viewer && hasVault();
+    acct.innerHTML = viewer ? '<img src="' + esc(safeUrl(viewer.avatar_url)) + '" alt="" referrerpolicy="no-referrer">' + esc(viewer.login)
+      : locked ? "Unlock" : "Sign in";
+    $("#si-form").hidden = !!viewer || locked;
+    $("#si-lock").hidden = !locked;
     $("#si-me").hidden = !viewer;
-    $("#si-title").textContent = viewer ? "Signed in" : "Sign in with a token";
+    $("#si-title").textContent = viewer ? "Signed in" : locked ? "Unlock saved token" : "Sign in with a token";
+    $("#si-keep-vault").disabled = !canEncrypt;
+    $("#si-pass-field").hidden = !$("#si-keep-vault").checked;
+    renderTokenLink();
     if (viewer) {
       $("#si-avatar").src = safeUrl(viewer.avatar_url);
       $("#si-login").textContent = "@" + viewer.login;
       $("#si-mine").href = "#" + encodeURIComponent(viewer.login);
-      const risky = scopes.filter(function (s) { return WRITE_SCOPE.test(s); });
-      $("#si-store").textContent = store(localStorage, TOKEN_KEY) ? "Token is saved on this device until you sign out." : "Token is forgotten when this tab closes.";
-      $("#si-warn").hidden = !risky.length;
-      $("#si-warn").textContent = risky.length
-        ? "This token can also change things on your account (" + risky.join(", ") + "). gitfolio only reads. A token with no scopes, or a read-only fine-grained one, is safer."
-        : "";
+      $("#si-store").textContent = hasVault() ? "Saved on this device, encrypted with your passphrase." : "Kept in memory only. Reloading signs you out.";
     }
   }
 
   // Resolves to the account behind a token, or throws with a message fit for the dialog.
   async function whoIs(tok) {
     const res = await fetch(API + "/user", Object.assign({ headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + tok } }, FETCH));
-    if (res.status === 401) throw new Error("GitHub rejected that token. Check it was copied in full and hasn't expired.");
+    if (res.status === 401) throw apiError("auth", "GitHub rejected that token. Check it was copied in full and hasn't expired.");
     if (!res.ok) throw new Error("GitHub returned an error (" + res.status + "). Try again in a moment.");
-    // Classic tokens list their scopes here; fine-grained tokens send nothing.
+    // Classic tokens list their scopes here; fine-grained tokens send nothing (their permissions can't be read back).
     scopes = (res.headers.get("x-oauth-scopes") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    const risky = scopes.filter(function (s) { return WRITE_SCOPE.test(s); });
+    if (risky.length) {
+      throw new Error("That token can change things on your account (" + risky.join(", ") + "), so gitfolio won't use it. " +
+        "Create a read-only one with the link above, and consider deleting this one on GitHub.");
+    }
     return res.json();
   }
 
-  function signOut(expired) {
+  // Asks GitHub to kill a token for good. The endpoint takes no authentication.
+  async function revoke(tok) {
+    const res = await fetch(API + "/credentials/revoke", Object.assign({}, FETCH, {
+      method: "POST",
+      headers: { Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+      body: JSON.stringify({ credentials: [tok] })
+    }));
+    return res.status === 202;
+  }
+
+  // note: optional message to show in the reopened dialog.
+  function signOut(note, ok) {
     token = null; viewer = null; scopes = [];
-    store(sessionStorage, TOKEN_KEY, null);
-    store(localStorage, TOKEN_KEY, null);
-    cacheClear(CACHE_PREFIX + "a:");
+    store(localStorage, VAULT_KEY, null);
+    memCache = {};
     rate.limit = null;
     $("#rate").textContent = "API · idle";
     renderAcct();
-    if (expired) {
-      $("#si-err").textContent = "Your saved token no longer works. Sign in again or carry on without it.";
-      $("#si-err").hidden = false;
-      dialog.showModal();
-    }
+    say(note, ok);
+    if (note) dialog.showModal();
     route(true);
   }
+
+  function friendly(ex) { return ex.message === "Failed to fetch" ? "Couldn't reach GitHub. Check your connection." : ex.message; }
 
   acct.addEventListener("click", function () { dialog.showModal(); });
   $("#si-close").addEventListener("click", function () { dialog.close(); });
   dialog.addEventListener("click", function (e) { if (e.target === dialog) dialog.close(); });
-  $("#si-out").addEventListener("click", function () { dialog.close(); signOut(false); });
+  dialog.addEventListener("close", function () { $("#si-token").value = $("#si-pass").value = $("#si-unlock").value = ""; });
+  $("#si-days").addEventListener("change", renderTokenLink);
+  $("#si-private").addEventListener("change", renderTokenLink);
+  $("#si-create").addEventListener("click", renderTokenLink);
+  $("#si-form").addEventListener("change", function (e) { if (e.target.name === "keep") $("#si-pass-field").hidden = !$("#si-keep-vault").checked; });
   $("#si-mine").addEventListener("click", function () { dialog.close(); });
+  $("#si-out").addEventListener("click", function () { dialog.close(); signOut(); });
+  $("#si-revoke").addEventListener("click", async function () {
+    if (!window.confirm("Revoke this token on GitHub? It stops working everywhere, for good, and GitHub emails you a notice.")) return;
+    const tok = token;
+    const done = await revoke(tok).catch(function () { return false; });
+    dialog.close();
+    signOut(done ? "Signed out. GitHub accepted the request to revoke the token."
+      : "Signed out, but GitHub didn't accept the revoke request. Delete the token at github.com/settings/tokens.", done);
+  });
+  $("#si-forget").addEventListener("click", function () { store(localStorage, VAULT_KEY, null); say(""); renderAcct(); });
+
   $("#si-form").addEventListener("submit", async function (e) {
     e.preventDefault();
-    const input = $("#si-token"), err = $("#si-err"), btn = $("#si-submit");
-    const tok = input.value.trim();
+    const input = $("#si-token"), btn = $("#si-submit");
+    const tok = input.value.trim(), keep = $("#si-keep-vault").checked, pass = $("#si-pass").value;
     if (!tok) return;
     // Checked before anything is sent, so a mis-pasted password or other secret never leaves the page.
-    if (!TOKEN_SHAPE.test(tok)) {
-      err.textContent = "That doesn't look like a GitHub token. They start with ghp_ or github_pat_.";
-      err.hidden = false;
-      return;
-    }
-    err.hidden = true;
+    if (!TOKEN_SHAPE.test(tok)) { say("That doesn't look like a GitHub token. They start with github_pat_ or ghp_."); return; }
+    if (keep && pass.length < 8) { say("Choose a passphrase of at least 8 characters."); return; }
+    say("");
     btn.disabled = true;
     try {
-      viewer = await whoIs(tok);
-      token = tok;
-      store($("#si-remember").checked ? localStorage : sessionStorage, TOKEN_KEY, tok);
-      input.value = "";
+      const who = await whoIs(tok);
+      if (keep) await vaultSave(tok, pass);
+      viewer = who; token = tok;
       renderAcct();
       dialog.close();
       route(true);
     } catch (ex) {
-      err.textContent = ex.message === "Failed to fetch" ? "Couldn't reach GitHub. Check your connection." : ex.message;
-      err.hidden = false;
+      say(friendly(ex));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $("#si-lock").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const btn = $("#si-unlock-btn");
+    let tok;
+    say("");
+    btn.disabled = true;
+    try {
+      try { tok = await vaultOpen($("#si-unlock").value); }
+      catch (ex) { say("Wrong passphrase."); return; }
+      const who = await whoIs(tok);
+      viewer = who; token = tok;
+      renderAcct();
+      dialog.close();
+      route(true);
+    } catch (ex) {
+      // A token GitHub no longer accepts (expired or revoked) is not worth keeping.
+      if (ex.kind === "auth") { store(localStorage, VAULT_KEY, null); renderAcct(); say("The saved token has expired or been revoked, so it was removed. Create a new one to sign in."); }
+      else say(friendly(ex));
     } finally {
       btn.disabled = false;
     }
@@ -828,7 +927,7 @@
 
   // Saved lookups only. Sign-in is untouched.
   $("#clear-cache").addEventListener("click", function () {
-    cacheClear(CACHE_PREFIX);
+    cacheClear();
     flash("Cache cleared. The next lookup fetches fresh data.");
   });
 
@@ -837,13 +936,12 @@
     if (!window.confirm("Remove everything gitfolio has stored in this browser? This clears saved lookups and signs you out.")) return;
     run++;
     if (ctrl) ctrl.abort();
-    token = null; viewer = null; scopes = [];
+    token = null; viewer = null; scopes = []; memCache = {};
     [localStorage, sessionStorage].forEach(function (area) {
       try {
         Object.keys(area).forEach(function (k) { if (k.indexOf(APP_PREFIX) === 0) area.removeItem(k); });
       } catch (e) { /* storage blocked: nothing was stored */ }
     });
-    $("#si-token").value = "";
     rate.limit = null;
     $("#rate").textContent = "API · idle";
     renderAcct();
@@ -924,16 +1022,9 @@
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
 
-  (async function init() {
-    const saved = store(sessionStorage, TOKEN_KEY) || store(localStorage, TOKEN_KEY);
-    if (saved) {
-      try { viewer = await whoIs(saved); token = saved; }
-      catch (e) {
-        // Only forget the token when GitHub says it's bad, not when the network is down.
-        if (/rejected/.test(e.message)) { store(sessionStorage, TOKEN_KEY, null); store(localStorage, TOKEN_KEY, null); }
-      }
-    }
-    renderAcct();
-    route(false);
-  })();
+  // Sweep away a token left unencrypted by an earlier build. Signing in now needs the passphrase or a fresh paste.
+  store(sessionStorage, LEGACY_TOKEN_KEY, null);
+  store(localStorage, LEGACY_TOKEN_KEY, null);
+  renderAcct();
+  route(false);
 })();
