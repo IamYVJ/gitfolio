@@ -6,6 +6,11 @@
     document.body.textContent = "gitfolio can't be embedded. Open it in its own tab.";
     return;
   }
+  // Never run over plain http, where the page's script and any token could be read or altered in transit.
+  if (location.protocol === "http:" && !/^(localhost|127\.0\.0\.1|\[::1\])$|\.(localhost|test)$/.test(location.hostname)) {
+    location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+    return;
+  }
 
   const API = "https://api.github.com";
   // Public mirror of the profile contribution calendar; GitHub only exposes it to signed-in API clients.
@@ -18,6 +23,7 @@
   const APP_PREFIX = "gitfolio:", CACHE_PREFIX = APP_PREFIX + "c:", VAULT_KEY = APP_PREFIX + "vault";
   const LEGACY_TOKEN_KEY = APP_PREFIX + "token"; // earlier builds kept the token here unencrypted
   const KDF_ROUNDS = 600000;
+  const IDLE = 30 * 60e3; // signed-in tabs sign themselves out after this long without input
   const TOKEN_SHAPE = /^(?:gh[a-z]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|[a-f0-9]{40})$/;
   // Classic-token scopes that can change things. gitfolio only reads, so a token carrying one is refused.
   const WRITE_SCOPE = /^(repo|public_repo|workflow|gist|user|notifications|codespace|project|delete_repo|delete:.*|write:.*|admin:.*)$/;
@@ -47,6 +53,7 @@
   }
   function full(n) { return Number(n).toLocaleString("en-US"); }
   function plural(n, word) { return full(n) + " " + word + (n === 1 ? "" : "s"); }
+  function num(v) { v = Number(v); return isFinite(v) ? v : 0; }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   function pad(n) { return String(n).padStart(2, "0"); }
@@ -95,7 +102,8 @@
   };
   const OTHER = "#5f7892";
   function langColor(name) {
-    if (LANG[name]) return LANG[name];
+    name = String(name);
+    if (Object.prototype.hasOwnProperty.call(LANG, name)) return LANG[name];
     let h = 0;
     for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
     return "hsl(" + h + " 45% 55%)";
@@ -148,7 +156,7 @@
   /* --------------------------------------------------------------- fetchers */
   async function fetchRepos(login) {
     const own = viewer && viewer.login.toLowerCase() === login.toLowerCase();
-    const base = own ? "/user/repos?affiliation=owner&visibility=all" : "/users/" + login + "/repos?type=owner";
+    const base = own ? "/user/repos?affiliation=owner&visibility=all" : "/users/" + encodeURIComponent(login) + "/repos?type=owner";
     const maxPages = token ? AUTH_PAGES : ANON_PAGES;
     let out = [];
     for (let page = 1; page <= maxPages; page++) {
@@ -165,6 +173,8 @@
     return { repos: out, truncated: true };
   }
 
+  function repoPath(repo) { return "/repos/" + String(repo.full).split("/").map(encodeURIComponent).join("/"); }
+
   // Search only returns a count here; any failure just leaves the stat blank.
   function searchCount(kind, q) {
     return gh("/search/" + kind + "?per_page=1&q=" + encodeURIComponent(q))
@@ -175,7 +185,7 @@
   async function fetchContribGraphQL(login) {
     const years = (await graphql("query($login:String!){user(login:$login){contributionsCollection{contributionYears}}}", { login: login }))
       .user.contributionsCollection.contributionYears;
-    const parts = years.map(function (y) {
+    const parts = years.map(Number).filter(Number.isInteger).map(function (y) {
       return "y" + y + ':contributionsCollection(from:"' + y + '-01-01T00:00:00Z",to:"' + y + '-12-31T23:59:59Z")' +
         "{contributionCalendar{weeks{contributionDays{date contributionCount}}}}";
     });
@@ -196,6 +206,14 @@
     return (await res.json()).contributions.map(function (d) { return [d.date, d.count]; });
   }
 
+  // Contribution days come from a third party (the mirror) or from shared storage (the cache), so only
+  // well-formed [date, count] pairs are kept before anything is rendered.
+  function cleanDays(days) {
+    return (Array.isArray(days) ? days : []).filter(Array.isArray)
+      .map(function (d) { return [String(d[0]), Math.max(0, Math.floor(num(d[1])))]; })
+      .filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d[0]); });
+  }
+
   // -> sorted [[date, count], ...] over the account's whole history, or null.
   async function fetchContrib(login) {
     let days = null;
@@ -203,9 +221,7 @@
     if (!days) days = await fetchContribMirror(login).catch(function (e) { if (e.name === "AbortError") throw e; return null; });
     if (!days) return null;
     const end = today();
-    // The mirror is a third party, so keep only well-formed [date, count] pairs before anything is rendered.
-    days = days.map(function (d) { return [String(d[0]), Math.max(0, Math.floor(Number(d[1])) || 0)]; })
-      .filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d[0]); });
+    days = cleanDays(days);
     return days.filter(function (d) { return d[0] <= end; }).sort(function (a, b) { return a[0] < b[0] ? -1 : 1; });
   }
 
@@ -215,7 +231,7 @@
     const entry = S.scan[repo.full] || (S.scan[repo.full] = {});
     if (!hasBudget()) { S.rateHit = true; return; }
     let res;
-    try { res = await gh("/repos/" + repo.full + "/stats/contributors", { raw: true }); }
+    try { res = await gh(repoPath(repo) + "/stats/contributors", { raw: true }); }
     catch (e) { if (e.kind === "rate") { S.rateHit = true; return; } throw e; }
     if (res.status === 202) { entry.pending = true; return; }
     entry.pending = false;
@@ -237,7 +253,7 @@
   async function fetchRepoLangs(repo) {
     const entry = S.scan[repo.full] || (S.scan[repo.full] = {});
     if (!hasBudget()) { S.rateHit = true; return; }
-    try { entry.langs = await gh("/repos/" + repo.full + "/languages"); }
+    try { entry.langs = await gh(repoPath(repo) + "/languages"); }
     catch (e) { if (e.kind === "rate") S.rateHit = true; else if (e.name === "AbortError") throw e; }
   }
 
@@ -247,8 +263,19 @@
   let memCache = {};
   function cacheKey(login) { return CACHE_PREFIX + "p:" + login.toLowerCase(); }
   function cacheGet(login) {
-    const hit = token ? memCache[login.toLowerCase()] : store(localStorage, cacheKey(login));
-    return hit && Date.now() - hit.t < hit.ttl ? hit.S : null;
+    if (token) {
+      const kept = memCache[login.toLowerCase()];
+      return kept && Date.now() - kept.t < kept.ttl ? kept.S : null;
+    }
+    // localStorage is shared with every other site on this origin, so a stored lookup is checked before it is trusted.
+    const hit = store(localStorage, cacheKey(login));
+    if (!hit || !(Date.now() - hit.t < hit.ttl) || !validCache(hit.S)) return null;
+    if (hit.S.contrib) hit.S.contrib = cleanDays(hit.S.contrib);
+    return hit.S;
+  }
+  function validCache(c) {
+    return !!c && !!c.user && typeof c.user.login === "string" && Array.isArray(c.repos) && Array.isArray(c.scanList) &&
+      !!c.scan && typeof c.scan === "object" && (c.contrib == null || Array.isArray(c.contrib));
   }
   function cachePut() {
     // Incomplete results expire quickly so a reload picks up what GitHub hadn't finished computing.
@@ -396,7 +423,7 @@
   function derive() {
     const d = { stars: 0, forks: 0, sources: 0, forked: 0, top: null, lines: 0, added: 0, deleted: 0, commits: 0, scanned: 0, pending: 0, langs: {}, langMode: "bytes", langRepos: 0 };
     (S.repos || []).forEach(function (r) {
-      d.stars += r.stars; d.forks += r.forks;
+      d.stars += num(r.stars); d.forks += num(r.forks);
       if (r.fork) d.forked++; else d.sources++;
       if (r.stars && (!d.top || r.stars > d.top.stars)) d.top = r;
     });
@@ -404,8 +431,8 @@
       const e = S.scan[name];
       if (!e) return;
       if (e.pending) d.pending++;
-      if (e.stats) { d.scanned++; d.lines += e.lines; d.added += e.added; d.deleted += e.deleted; d.commits += e.commits; }
-      if (e.langs) { d.langRepos++; Object.keys(e.langs).forEach(function (k) { d.langs[k] = (d.langs[k] || 0) + e.langs[k]; }); }
+      if (e.stats) { d.scanned++; d.lines += num(e.lines); d.added += num(e.added); d.deleted += num(e.deleted); d.commits += num(e.commits); }
+      if (e.langs) { d.langRepos++; Object.keys(e.langs).forEach(function (k) { d.langs[k] = (d.langs[k] || 0) + num(e.langs[k]); }); }
     });
     if (!d.langRepos && S.scanDone) {
       d.langMode = "repos";
@@ -834,18 +861,34 @@
     return res.status === 202;
   }
 
-  // note: optional message to show in the reopened dialog.
-  function signOut(note, ok) {
+  // note: optional message to show in the reopened dialog. keepVault leaves the encrypted copy for a later unlock.
+  function signOut(note, ok, keepVault) {
     token = null; viewer = null; scopes = [];
-    store(localStorage, VAULT_KEY, null);
+    if (!keepVault) store(localStorage, VAULT_KEY, null);
     memCache = {};
     rate.limit = null;
     $("#rate").textContent = "API · idle";
     renderAcct();
     say(note, ok);
-    if (note) dialog.showModal();
+    if (note && !dialog.open) dialog.showModal();
     route(true);
   }
+
+  // A page that opened this tab keeps a handle on it: it can redirect the tab, and from the same origin script it.
+  function openedByAnotherPage() { try { return !!window.opener; } catch (e) { return true; } }
+  const OPENER_MSG = "This tab was opened by another page, which can still control it. Open gitfolio in a new tab yourself, then sign in.";
+
+  // An unattended tab shouldn't stay signed in. After IDLE without input the token is dropped from
+  // memory; a remembered one stays encrypted on disk and needs the passphrase again.
+  let lastActive = Date.now();
+  function idleCheck() {
+    if (token && Date.now() - lastActive > IDLE) signOut("Signed out after " + IDLE / 60e3 + " minutes without activity.", false, true);
+  }
+  ["pointerdown", "keydown"].forEach(function (type) {
+    document.addEventListener(type, function () { lastActive = Date.now(); }, { passive: true, capture: true });
+  });
+  document.addEventListener("visibilitychange", idleCheck);
+  setInterval(idleCheck, 60e3);
 
   function friendly(ex) { return ex.message === "Failed to fetch" ? "Couldn't reach GitHub. Check your connection." : ex.message; }
 
@@ -874,6 +917,7 @@
     const input = $("#si-token"), btn = $("#si-submit");
     const tok = input.value.trim(), keep = $("#si-keep-vault").checked, pass = $("#si-pass").value;
     if (!tok) return;
+    if (openedByAnotherPage()) { say(OPENER_MSG); return; }
     // Checked before anything is sent, so a mis-pasted password or other secret never leaves the page.
     if (!TOKEN_SHAPE.test(tok)) { say("That doesn't look like a GitHub token. They start with github_pat_ or ghp_."); return; }
     if (keep && pass.length < 8) { say("Choose a passphrase of at least 8 characters."); return; }
@@ -883,10 +927,13 @@
       const who = await whoIs(tok);
       if (keep) await vaultSave(tok, pass);
       viewer = who; token = tok;
+      lastActive = Date.now();
       renderAcct();
       dialog.close();
       route(true);
     } catch (ex) {
+      // Don't leave a refused token sitting in the field.
+      if (ex.message !== "Failed to fetch") input.value = "";
       say(friendly(ex));
     } finally {
       btn.disabled = false;
@@ -897,6 +944,7 @@
     e.preventDefault();
     const btn = $("#si-unlock-btn");
     let tok;
+    if (openedByAnotherPage()) { say(OPENER_MSG); return; }
     say("");
     btn.disabled = true;
     try {
@@ -904,6 +952,7 @@
       catch (ex) { say("Wrong passphrase."); return; }
       const who = await whoIs(tok);
       viewer = who; token = tok;
+      lastActive = Date.now();
       renderAcct();
       dialog.close();
       route(true);

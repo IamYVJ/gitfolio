@@ -66,8 +66,14 @@ When you sign out you can also **revoke** the token, which asks GitHub to disabl
 - **Script lockdown.** A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API and the contributions mirror.
 - **Untrusted data.** Text from GitHub is escaped before it reaches the page, links are restricted to `http(s)`, and data from the mirror is validated first.
 - **Paste check.** Text that isn't shaped like a GitHub token is rejected before anything is sent.
-- **Framing and leakage.** The page refuses to run inside another site's frame, and sends no referrer or cookies with its requests.
+- **Framing and leakage.** The page refuses to run inside another site's frame or over plain http, and sends no referrer or cookies with its requests.
+- **Idle sign-out.** After 30 minutes without input the token is dropped from memory. A remembered token stays encrypted and needs the passphrase again.
+- **Opened tabs.** Sign-in is refused in a tab that another page opened, since that page keeps control of the tab.
 
-What this doesn't cover: while you are signed in, the token is in the page's memory, so malicious script running on the page or a hostile browser extension could still use it. A short-lived, read-only token is what limits the damage in that case.
+What this doesn't cover:
+
+- While you are signed in, the token is in the page's memory, so malicious script running on the page or a hostile browser extension could still use it. A short-lived, read-only token is what limits the damage in that case.
+- **Shared origin.** A GitHub Pages project site shares its origin (`<user>.github.io`) with every other Pages site of the same account. Scripts on those sites, including third-party scripts they load, can read this app's `localStorage` (the encrypted token and cached lookups) and could imitate its sign-in. If you use sign-in for anything sensitive, serve gitfolio from an origin of its own: a custom domain, or a GitHub account or organisation that hosts nothing else.
+- Anyone who can push to this repository controls the script every visitor runs. Protect the account with two-factor authentication and the `main` branch with branch protection.
 
 At the bottom of the page, **Clear cache** forgets saved lookups, and **Clear data** removes everything gitfolio stored in the browser, the encrypted token included.
