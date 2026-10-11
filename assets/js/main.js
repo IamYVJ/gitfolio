@@ -1,6 +1,12 @@
 (function () {
   "use strict";
 
+  // GitHub Pages can't send X-Frame-Options, so refuse to run inside another site's frame (clickjacking).
+  if (window.top !== window.self) {
+    document.body.textContent = "gitfolio can't be embedded. Open it in its own tab.";
+    return;
+  }
+
   const API = "https://api.github.com";
   // Public mirror of the profile contribution calendar; GitHub only exposes it to signed-in API clients.
   const CONTRIB_API = "https://github-contributions-api.jogruber.de/v4/";
@@ -9,10 +15,15 @@
   const ANON_PAGES = 3, AUTH_PAGES = 10; // x100 repos
   const STATS_WAITS = [4000, 6000, 8000, 10000, 12000]; // pauses between polls for GitHub's line counts
   const TTL = 60 * 60e3;
-  const TOKEN_KEY = "gitfolio:token", CACHE_PREFIX = "gitfolio:c:";
+  const APP_PREFIX = "gitfolio:", TOKEN_KEY = APP_PREFIX + "token", CACHE_PREFIX = APP_PREFIX + "c:";
+  const TOKEN_SHAPE = /^(?:gh[a-z]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|[a-f0-9]{40})$/;
+  // Classic-token scopes that can change things. gitfolio only reads, so these earn a warning.
+  const WRITE_SCOPE = /^(repo|public_repo|workflow|gist|user|notifications|codespace|project|delete_repo|delete:.*|write:.*|admin:.*)$/;
+  // Never send cookies or a referrer with any request; the token only ever travels in the Authorization header.
+  const FETCH = { credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store" };
   const PAGE = 12;
 
-  let token = null, viewer = null;
+  let token = null, viewer = null, scopes = [];
   let S = null;                       // everything known about the profile on screen
   let run = 0, ctrl = null;           // bumps on every lookup so stale responses are dropped
   const rate = { limit: null, remaining: null, reset: null };
@@ -98,7 +109,7 @@
 
   // opts.raw returns the Response (for endpoints where the status code matters).
   async function gh(path, opts) {
-    const res = await fetch(API + path, { headers: headers(), signal: ctrl && ctrl.signal });
+    const res = await fetch(API + path, Object.assign({ headers: headers(), signal: ctrl && ctrl.signal }, FETCH));
     const h = res.headers;
     // Search has its own bucket; only the core one decides how many repos we can scan.
     if (path.indexOf("/search/") !== 0 && h.get("x-ratelimit-remaining") != null) {
@@ -118,12 +129,12 @@
   }
 
   async function graphql(query, variables) {
-    const res = await fetch(API + "/graphql", {
+    const res = await fetch(API + "/graphql", Object.assign({}, FETCH, {
       method: "POST",
       headers: Object.assign({ "Content-Type": "application/json" }, headers()),
       body: JSON.stringify({ query: query, variables: variables }),
       signal: ctrl && ctrl.signal
-    });
+    }));
     if (!res.ok) throw apiError("http", "GraphQL " + res.status);
     const body = await res.json();
     if (body.errors || !body.data) throw apiError("http", "GraphQL error");
@@ -177,7 +188,8 @@
   }
 
   async function fetchContribMirror(login) {
-    const res = await fetch(CONTRIB_API + encodeURIComponent(login), { signal: ctrl && ctrl.signal });
+    // Third party: deliberately no headers(), so the token can never reach it.
+    const res = await fetch(CONTRIB_API + encodeURIComponent(login), Object.assign({ signal: ctrl && ctrl.signal }, FETCH));
     if (!res.ok) throw apiError("http", "Contributions " + res.status);
     return (await res.json()).contributions.map(function (d) { return [d.date, d.count]; });
   }
@@ -189,6 +201,9 @@
     if (!days) days = await fetchContribMirror(login).catch(function (e) { if (e.name === "AbortError") throw e; return null; });
     if (!days) return null;
     const end = today();
+    // The mirror is a third party, so keep only well-formed [date, count] pairs before anything is rendered.
+    days = days.map(function (d) { return [String(d[0]), Math.max(0, Math.floor(Number(d[1])) || 0)]; })
+      .filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d[0]); });
     return days.filter(function (d) { return d[0] <= end; }).sort(function (a, b) { return a[0] < b[0] ? -1 : 1; });
   }
 
@@ -324,7 +339,7 @@
         S.counts = { commits: r[0], prs: r[1], issues: r[2] };
         S.contrib = r[3];
         renderAll();
-      });
+      }).catch(function () { /* only rejects when this lookup was abandoned */ });
 
       let done = 0;
       const steps = list.length * 2 || 1;
@@ -478,20 +493,20 @@
     if (u.company) meta.push(esc(u.company));
     if (u.location) meta.push(esc(u.location));
     const blog = safeUrl(u.blog);
-    if (blog) meta.push('<a href="' + esc(blog) + '" target="_blank" rel="noopener nofollow">' + esc(u.blog.replace(/^https?:\/\//i, "").replace(/\/$/, "")) + "</a>");
-    meta.push("Joined " + monthYear(u.created_at));
+    if (blog) meta.push('<a href="' + esc(blog) + '" target="_blank" rel="noopener noreferrer nofollow">' + esc(u.blog.replace(/^https?:\/\//i, "").replace(/\/$/, "")) + "</a>");
+    meta.push("Joined " + esc(monthYear(String(u.created_at))));
     if (S.at) meta.push("Updated " + clock(S.at / 1000));
     $("#v-profile").innerHTML =
-      '<img class="avatar" src="' + esc(u.avatar_url) + '" alt="" width="112" height="112">' +
+      '<img class="avatar" src="' + esc(safeUrl(u.avatar_url)) + '" alt="" width="112" height="112" referrerpolicy="no-referrer">' +
       '<div class="profile__copy">' +
         '<h1 class="profile__name">' + esc(u.name || u.login) + "</h1>" +
-        '<p class="profile__handle mono"><a href="' + esc(u.html_url) + '" target="_blank" rel="noopener">@' + esc(u.login) + "</a>" +
+        '<p class="profile__handle mono"><a href="' + esc(safeUrl(u.html_url)) + '" target="_blank" rel="noopener noreferrer">@' + esc(u.login) + "</a>" +
           (u.type !== "User" ? " · " + esc(u.type) : "") + "</p>" +
         (u.bio ? '<p class="profile__bio">' + esc(u.bio) + "</p>" : "") +
         '<ul class="profile__meta mono">' + meta.map(function (m) { return "<li>" + m + "</li>"; }).join("") + "</ul>" +
       "</div>" +
       '<div class="profile__actions">' +
-        '<a class="btn btn--ghost btn--sm" href="' + esc(u.html_url) + '" target="_blank" rel="noopener">View on GitHub ↗</a>' +
+        '<a class="btn btn--ghost btn--sm" href="' + esc(safeUrl(u.html_url)) + '" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a>' +
         '<button class="btn btn--ghost btn--sm" type="button" data-act="refresh">Refresh</button>' +
         (S.scanDone ? '<span class="profile__export mono">Export <button class="linkbtn" data-act="json">JSON</button>' +
           '<button class="linkbtn" data-act="csv" title="One row per repository">CSV</button></span>' : "") +
@@ -550,7 +565,7 @@
     cs.cells.forEach(function (c, i) {
       const col = Math.floor((i + first) / 7), row = (i + first) % 7;
       rects += '<rect class="l' + cs.level(c[1]) + '" x="' + (LEFT + col * STEP) + '" y="' + (TOP + row * STEP) + '" width="' + CELL + '" height="' + CELL +
-        '" data-tip="<b>' + (c[1] ? plural(c[1], "contribution") : "No contributions") + "</b> · " + fullDate(c[0]) + '"/>';
+        '" data-tip="' + (c[1] ? plural(c[1], "contribution") : "No contributions") + "|" + fullDate(c[0]) + '"/>';
       const month = +c[0].slice(5, 7);
       if (row === 0 && month !== lastMonth) {
         if (col < 52) labels += '<text x="' + (LEFT + col * STEP) + '" y="9">' + MONTHS[month - 1] + "</text>";
@@ -565,7 +580,7 @@
     const peak = Math.max.apply(null, years.map(function (y) { return cs.byYear[y]; })) || 1;
     const bars = years.map(function (y) {
       const n = cs.byYear[y];
-      return '<div class="yr" data-tip="<b>' + plural(n, "contribution") + "</b> · " + y + '"><span class="yr__n">' + compact(n) +
+      return '<div class="yr" data-tip="' + plural(n, "contribution") + "|" + y + '"><span class="yr__n">' + compact(n) +
         '</span><i style="height:' + Math.round(n / peak * 100) + '%"></i><span>' + y + "</span></div>";
     }).join("");
 
@@ -611,7 +626,7 @@
         : "By bytes of code across " + plural(d.langRepos, "scanned repo") + ".") + "</p>" +
       '<div class="panel">' +
         '<div class="langbar" role="img" aria-label="Language share">' + rows.map(function (r) {
-          return '<i style="flex:' + r.n + " 0 0;background:" + r.color + '" data-tip="<b>' + esc(r.name) + "</b> · " + pct(r.n) + " · " + amount(r.n) + '"></i>';
+          return '<i style="flex:' + r.n + " 0 0;background:" + r.color + '" data-tip="' + esc(r.name.replace(/\|/g, "/") + "|" + pct(r.n) + " · " + amount(r.n)) + '"></i>';
         }).join("") + "</div>" +
         '<ul class="langs">' + rows.map(function (r) {
           return '<li title="' + esc(amount(r.n)) + '"><i class="dot" style="background:' + r.color + '"></i><span class="name">' + esc(r.name) + '</span><span class="pct">' + pct(r.n) + "</span></li>";
@@ -636,14 +651,14 @@
     grid.innerHTML = shown.map(function (r) {
       const e = scanOf(r);
       const tag = r.priv ? '<span class="pin pin--amber">Private</span>' : r.fork ? '<span class="pin">Fork</span>' : r.archived ? '<span class="pin">Archived</span>' : "";
-      return '<a class="card" href="' + esc(r.url) + '" target="_blank" rel="noopener">' +
+      return '<a class="card" href="' + esc(safeUrl(r.url)) + '" target="_blank" rel="noopener noreferrer">' +
         '<div class="card__top"><h3 class="card__title">' + esc(r.name) + "</h3>" + tag + "</div>" +
         (r.desc ? '<p class="card__desc">' + esc(r.desc) + "</p>" : "") +
         '<div class="card__meta">' +
           (r.language ? '<span><i class="dot" style="background:' + langColor(r.language) + '"></i>' + esc(r.language) + "</span>" : "") +
           '<span title="Stars">' + STAR_SVG + compact(r.stars) + "</span>" +
           '<span title="Forks">' + FORK_SVG + compact(r.forks) + "</span>" +
-          (r.pushed ? "<span>" + monthYear(r.pushed) + "</span>" : "") +
+          (r.pushed ? "<span>" + esc(monthYear(String(r.pushed))) + "</span>" : "") +
         "</div>" +
         (e.stats ? '<div class="card__loc"><span><b>' + compact(e.lines) + "</b> lines</span>" +
           '<span title="Lines added and deleted by @' + esc(S.user.login) + '"><b>+' + compact(e.added) + "</b> / −" + compact(e.deleted) + "</span>" +
@@ -725,27 +740,35 @@
   const dialog = $("#signin"), acct = $("#acct");
 
   function renderAcct() {
-    acct.innerHTML = viewer ? '<img src="' + esc(viewer.avatar_url) + '" alt="">' + esc(viewer.login) : "Sign in";
+    acct.innerHTML = viewer ? '<img src="' + esc(safeUrl(viewer.avatar_url)) + '" alt="" referrerpolicy="no-referrer">' + esc(viewer.login) : "Sign in";
     $("#si-form").hidden = !!viewer;
     $("#si-me").hidden = !viewer;
     $("#si-title").textContent = viewer ? "Signed in" : "Sign in with a token";
     if (viewer) {
-      $("#si-avatar").src = viewer.avatar_url;
+      $("#si-avatar").src = safeUrl(viewer.avatar_url);
       $("#si-login").textContent = "@" + viewer.login;
-      $("#si-mine").href = "#" + viewer.login;
+      $("#si-mine").href = "#" + encodeURIComponent(viewer.login);
+      const risky = scopes.filter(function (s) { return WRITE_SCOPE.test(s); });
+      $("#si-store").textContent = store(localStorage, TOKEN_KEY) ? "Token is saved on this device until you sign out." : "Token is forgotten when this tab closes.";
+      $("#si-warn").hidden = !risky.length;
+      $("#si-warn").textContent = risky.length
+        ? "This token can also change things on your account (" + risky.join(", ") + "). gitfolio only reads. A token with no scopes, or a read-only fine-grained one, is safer."
+        : "";
     }
   }
 
   // Resolves to the account behind a token, or throws with a message fit for the dialog.
   async function whoIs(tok) {
-    const res = await fetch(API + "/user", { headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + tok } });
+    const res = await fetch(API + "/user", Object.assign({ headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + tok } }, FETCH));
     if (res.status === 401) throw new Error("GitHub rejected that token. Check it was copied in full and hasn't expired.");
     if (!res.ok) throw new Error("GitHub returned an error (" + res.status + "). Try again in a moment.");
+    // Classic tokens list their scopes here; fine-grained tokens send nothing.
+    scopes = (res.headers.get("x-oauth-scopes") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
     return res.json();
   }
 
   function signOut(expired) {
-    token = null; viewer = null;
+    token = null; viewer = null; scopes = [];
     store(sessionStorage, TOKEN_KEY, null);
     store(localStorage, TOKEN_KEY, null);
     cacheClear(CACHE_PREFIX + "a:");
@@ -770,6 +793,12 @@
     const input = $("#si-token"), err = $("#si-err"), btn = $("#si-submit");
     const tok = input.value.trim();
     if (!tok) return;
+    // Checked before anything is sent, so a mis-pasted password or other secret never leaves the page.
+    if (!TOKEN_SHAPE.test(tok)) {
+      err.textContent = "That doesn't look like a GitHub token. They start with ghp_ or github_pat_.";
+      err.hidden = false;
+      return;
+    }
     err.hidden = true;
     btn.disabled = true;
     try {
@@ -786,6 +815,43 @@
     } finally {
       btn.disabled = false;
     }
+  });
+
+  /* ------------------------------------------------------------ local data */
+  function flash(text) {
+    const el = $("#cleared");
+    el.textContent = text;
+    el.hidden = false;
+    clearTimeout(flash.t);
+    flash.t = setTimeout(function () { el.hidden = true; }, 4000);
+  }
+
+  // Saved lookups only. Sign-in is untouched.
+  $("#clear-cache").addEventListener("click", function () {
+    cacheClear(CACHE_PREFIX);
+    flash("Cache cleared. The next lookup fetches fresh data.");
+  });
+
+  // Everything gitfolio keeps in this browser: saved lookups and the token.
+  $("#clear-data").addEventListener("click", function () {
+    if (!window.confirm("Remove everything gitfolio has stored in this browser? This clears saved lookups and signs you out.")) return;
+    run++;
+    if (ctrl) ctrl.abort();
+    token = null; viewer = null; scopes = [];
+    [localStorage, sessionStorage].forEach(function (area) {
+      try {
+        Object.keys(area).forEach(function (k) { if (k.indexOf(APP_PREFIX) === 0) area.removeItem(k); });
+      } catch (e) { /* storage blocked: nothing was stored */ }
+    });
+    $("#si-token").value = "";
+    rate.limit = null;
+    $("#rate").textContent = "API · idle";
+    renderAcct();
+    // Leave the profile view too: it may be showing private repos fetched with the token.
+    history.replaceState(null, "", location.pathname + location.search);
+    showHome();
+    window.scrollTo(0, 0);
+    flash("All gitfolio data removed from this browser.");
   });
 
   /* ----------------------------------------------------------------- route */
@@ -841,7 +907,10 @@
   document.addEventListener("pointermove", function (e) {
     const mark = e.target.closest && e.target.closest("[data-tip]");
     if (!mark) { tip.hidden = true; return; }
-    tip.innerHTML = mark.dataset.tip;
+    // Built with textContent: tooltip text includes names that come from the API.
+    const parts = mark.dataset.tip.split("|"), strong = document.createElement("b");
+    strong.textContent = parts[0];
+    tip.replaceChildren(strong, parts[1] ? " · " + parts[1] : "");
     tip.hidden = false;
     const half = tip.offsetWidth / 2 + 8;
     tip.style.left = Math.max(half, Math.min(window.innerWidth - half, e.clientX)) + "px";

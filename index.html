@@ -8,7 +8,8 @@
   <meta name="theme-color" content="#05080d">
   <meta name="color-scheme" content="dark">
   <!-- The page only ever talks to GitHub's API and the public contributions mirror. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://api.github.com https://github-contributions-api.jogruber.de; img-src 'self' data: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://api.github.com https://github-contributions-api.jogruber.de; img-src 'self' data: https://*.githubusercontent.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
   <meta property="og:type" content="website">
@@ -99,6 +100,11 @@
         <a href="https://github.com/IamYVJ/gitfolio" target="_blank" rel="noopener">Source</a>
         <a href="#main">Back to top ↑</a>
       </nav>
+      <div class="footer__data">
+        <button class="btn btn--ghost btn--sm" id="clear-cache" type="button" title="Forget saved lookups so the next one fetches fresh data. Keeps you signed in.">Clear cache</button>
+        <button class="btn btn--ghost btn--sm btn--danger" id="clear-data" type="button" title="Remove everything gitfolio stored in this browser, including your token.">Clear data</button>
+        <span class="mono" id="cleared" role="status" hidden></span>
+      </div>
       <p class="footer__fine mono dim">Not affiliated with GitHub. Data comes from the GitHub API and is cached in your browser for an hour.</p>
     </div>
   </footer>
@@ -120,12 +126,14 @@
         <p>Signing in lifts GitHub's limit from 60 to 5,000 requests an hour, so every repo gets scanned. On your own profile it also adds private repos and private contributions.</p>
         <p class="dim">A static site can't do GitHub's OAuth login (that needs a server to hold a secret), so sign-in uses a personal access token. It stays in this browser and is only ever sent to api.github.com.</p>
         <ol class="steps">
-          <li>Create a token:
-            <a href="https://github.com/settings/tokens/new?description=gitfolio&scopes=read:user" target="_blank" rel="noopener">public data only ↗</a>
-            or <a href="https://github.com/settings/tokens/new?description=gitfolio&scopes=read:user,repo" target="_blank" rel="noopener">include private repos ↗</a>
+          <li>Create a token with an expiry date:
+            <a href="https://github.com/settings/tokens/new?description=gitfolio" target="_blank" rel="noopener noreferrer">no scopes, public data only ↗</a> (safest),
+            or a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">fine-grained token ↗</a>
+            with read-only <em>Contents</em> and <em>Metadata</em> to include private repos.
           </li>
           <li>Paste it here.</li>
         </ol>
+        <p class="dim">Never give this page a token that can write. Anyone using this browser profile, and any browser extension, can read a saved token, so on a shared computer leave "Remember" unticked.</p>
         <label class="field">
           <span class="sr">Personal access token</span>
           <input id="si-token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" required>
@@ -146,8 +154,10 @@
           <div>
             <p class="me__name" id="si-login"></p>
             <p class="mono dim">Signed in · 5,000 requests / hour</p>
+            <p class="mono dim" id="si-store"></p>
           </div>
         </div>
+        <p class="modal__warn" id="si-warn" role="alert" hidden></p>
         <div class="modal__actions">
           <a class="btn btn--primary" id="si-mine" href="#">View my stats</a>
           <button class="btn btn--ghost" id="si-out" type="button">Sign out</button>

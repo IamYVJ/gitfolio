@@ -48,7 +48,20 @@ Things worth knowing:
 
 A static site can't do GitHub's OAuth login, because exchanging the login code needs a client secret held on a server. Sign-in therefore uses a [personal access token](https://github.com/settings/tokens):
 
-- no scopes / `read:user` — public data, 5,000 requests an hour, every repo scanned
-- `repo` as well — also your private repos and private contributions when you view your own profile
+- **classic token with no scopes** — public data, 5,000 requests an hour, every repo scanned. Safest: it can't read or change anything private.
+- **fine-grained token** with read-only *Contents* and *Metadata* — also your private repos when you view your own profile.
 
-The token is kept in `sessionStorage` (or `localStorage` if you tick "Remember on this device") and is only sent to `api.github.com`. The page's Content-Security-Policy blocks requests to anywhere else.
+Give the token an expiry date, and never use one that can write. gitfolio only reads, and it warns you if the token you paste has write scopes.
+
+## Security
+
+A token kept in the browser can be read by anything that runs script on the page, by browser extensions, and by anyone using the same browser profile. That can't be fully removed on a static site, so the page is built to keep the exposure small:
+
+- The token is kept in `sessionStorage` (gone when the tab closes) unless you tick "Remember on this device".
+- It is sent only to `api.github.com`, in the `Authorization` header. It is never put in a URL, the cache, an export or a log, and the third-party contributions mirror is called without it.
+- A Content-Security-Policy allows scripts only from this site (no inline or third-party script) and network requests only to GitHub's API and the contributions mirror.
+- All text from GitHub is escaped before it reaches the page, links are restricted to `http(s)`, and data from the mirror is validated first.
+- Pasted text that isn't shaped like a GitHub token is rejected before anything is sent.
+- The page refuses to run inside another site's frame, and sends no referrer or cookies with its requests.
+
+At the bottom of the page, **Clear cache** forgets saved lookups, and **Clear data** removes everything gitfolio stored in the browser, token included. To cut off a token completely, also delete it at github.com/settings/tokens.

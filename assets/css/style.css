@@ -102,6 +102,8 @@ button, input, select { font: inherit; color: inherit; }
 .btn--ghost { background: rgba(255,255,255,0.02); color: var(--text); border-color: var(--line-2); }
 .btn--ghost:hover { border-color: var(--cyan); color: var(--cyan); }
 .btn--sm { font-size: 0.85rem; padding: 0.6em 1em; }
+.btn--danger { color: var(--red); border-color: rgba(255, 107, 120, 0.4); }
+.btn--danger:hover { color: var(--red); border-color: var(--red); background: rgba(255, 107, 120, 0.08); }
 
 .iconbtn {
   display: grid; place-items: center; flex: none;
@@ -355,6 +357,8 @@ button, input, select { font: inherit; color: inherit; }
 .footer__links { display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.92rem; }
 .footer__links a { color: var(--muted); }
 .footer__links a:hover { color: var(--cyan); }
+.footer__data { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.footer__data span { color: var(--green); }
 .footer__fine { grid-column: 1 / -1; margin: 8px 0 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: 0.72rem; }
 @media (max-width: 700px) { .footer__inner { grid-template-columns: minmax(0, 1fr); } }
 
@@ -385,6 +389,7 @@ dialog[open] { animation: pop 0.22s ease; }
 .check { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 0; cursor: pointer; }
 .check input { margin-top: 5px; accent-color: var(--cyan); }
 .modal__err { margin: 14px 0 0 !important; color: var(--red); }
+.modal__warn { margin: 16px 0 0 !important; padding: 10px 14px; border-radius: 10px; background: rgba(255, 195, 77, 0.06); border: 1px solid rgba(255, 195, 77, 0.25); color: #ffe9bd; }
 .modal__actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 .me { display: flex; align-items: center; gap: 14px; }
 .me img { border-radius: 50%; border: 1px solid var(--line-2); }
